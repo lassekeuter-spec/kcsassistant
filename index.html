@@ -131,50 +131,82 @@
       <button onclick="sendMessage()">Senden</button>
     </div>
   </div>
+<script>
+  async function sendMessage() {
+    const input = document.getElementById("input");
+    const messages = document.getElementById("messages");
 
-  <script>
-    async function sendMessage() {
-      const input = document.getElementById("input");
-      const messages = document.getElementById("messages");
+    if (input.value.trim() === "") return;
 
-      if (input.value.trim() === "") return;
+    // Nutzer-Nachricht anzeigen
+    const userMsg = document.createElement("div");
+    userMsg.className = "msg user";
+    userMsg.innerText = input.value;
+    messages.appendChild(userMsg);
 
-      // Nutzer
-      const userMsg = document.createElement("div");
-      userMsg.className = "msg user";
-      userMsg.innerText = input.value;
-      messages.appendChild(userMsg);
+    const userText = input.value;
+    input.value = "";
+    messages.scrollTop = messages.scrollHeight;
 
-      const userText = input.value;
-      input.value = "";
-      messages.scrollTop = messages.scrollHeight;
-
-      // Anfrage senden
+    try {
       const response = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userText }),
       });
 
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
+      console.log("API-Antwort:", data); // hilft dir im Browser-Console-Log
 
-      // Bot Antwort
+      // wenn HTTP-Fehlercode
+      if (!response.ok) {
+        const errText =
+          data.error ||
+          `Es ist ein Fehler aufgetreten (Status ${response.status}).`;
+        const botErr = document.createElement("div");
+        botErr.className = "msg bot";
+        botErr.innerText = errText;
+        messages.appendChild(botErr);
+        messages.scrollTop = messages.scrollHeight;
+        return;
+      }
+
+      // versuche verschiedene mögliche Felder
+      const botText =
+        data.reply ||
+        data.message ||
+        data.response ||
+        (data.choices &&
+          data.choices[0] &&
+          data.choices[0].message &&
+          data.choices[0].message.content) ||
+        data.answer ||
+        "Es ist ein unerwarteter Fehler aufgetreten.";
+
       const botMsg = document.createElement("div");
       botMsg.className = "msg bot";
-      botMsg.innerText = data.response || data.reply || "Fehler bei der Antwort.";
+      botMsg.innerText = botText;
       messages.appendChild(botMsg);
-
+      messages.scrollTop = messages.scrollHeight;
+    } catch (err) {
+      console.error(err);
+      const botErr = document.createElement("div");
+      botErr.className = "msg bot";
+      botErr.innerText =
+        "Es ist ein Verbindungsfehler aufgetreten. Bitte versuchen Sie es später erneut.";
+      messages.appendChild(botErr);
       messages.scrollTop = messages.scrollHeight;
     }
+  }
 
-    // ENTER zum Senden
-    document.getElementById("input").addEventListener("keydown", function (e) {
-      if (e.key === "Enter") {
-        e.preventDefault();
-        sendMessage();
-      }
-    });
-  </script>
+  // ENTER zum Senden
+  document.getElementById("input").addEventListener("keydown", function (e) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      sendMessage();
+    }
+  });
+</script>
 
 </body>
 </html>
