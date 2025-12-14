@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Praxibot – Patientenassistent</title>
+  <title>Demobot – Patientenassistent</title>
 
   <style>
     :root {
@@ -31,11 +31,23 @@
       color: var(--text);
     }
 
+    .header {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .logo {
+      height: 36px;
+      margin-bottom: 10px;
+      opacity: 0.9;
+    }
+
     h1 {
       font-size: 22px;
       font-weight: 600;
       margin-bottom: 4px;
-      color: var(--text);
       text-align: center;
     }
 
@@ -44,7 +56,6 @@
       color: var(--text-light);
       font-size: 14px;
       max-width: 520px;
-      margin-top: 0;
       margin-bottom: 20px;
       line-height: 1.4;
     }
@@ -105,7 +116,7 @@
       padding: 10px 12px;
       border-radius: 8px;
       border: 1px solid var(--border);
-     outline: none;
+      outline: none;
       font-size: 15px;
       background: #fafbfc;
     }
@@ -139,11 +150,15 @@
 </head>
 
 <body>
-  <h1>Praxibot – Ihr digitaler Patientenassistent</h1>
+
+  <div class="header">
+    <img src="logo.svg" alt="Demobot Logo" class="logo" />
+    <h1>Demobot – Ihr digitaler Patientenassistent</h1>
+  </div>
 
   <p class="demo-hinweis">
     <strong>Demo-Version:</strong> Diese Vorschau zeigt, wie ein digitaler Assistent für Ihre Praxis aussehen kann.
-    Inhalte, Design und Funktionen werden individuell an jede Praxis angepasst.
+    Inhalte, Design und Funktionen werden individuell angepasst.
   </p>
 
   <div class="chat-container">
@@ -165,9 +180,9 @@
         endpoint: "/api/chat",
         timeoutMs: 25000,
         intro:
-          "Willkommen beim Praxibot (Demo). Stellen Sie Ihre Frage rund um Termine, Sprechzeiten oder Rezepte.",
+          "Willkommen beim Demobot (Demo). Stellen Sie Ihre Frage rund um Termine, Sprechzeiten oder Rezepte.",
         systemPrompt:
-          "Du bist der digitale Praxisassistent (Praxibot) einer Arztpraxis. " +
+          "Du bist der digitale Praxisassistent (Demobot) einer Arztpraxis. " +
           "Du beantwortest nur organisatorische Fragen zu Sprechzeiten, Rezepten, Terminen usw. " +
           "Du gibst keine medizinischen Diagnosen oder Therapieempfehlungen und verweist bei Notfällen auf den Notruf 112."
       };
@@ -180,7 +195,6 @@
       };
 
       const history = [{ role: "system", content: CONFIG.systemPrompt }];
-
       let isSending = false;
 
       function setStatus(text) {
@@ -197,40 +211,15 @@
 
       function normalizeReply(data) {
         if (!data || typeof data !== "object") return null;
-
-        const direct =
-          data.reply ?? data.message ?? data.response ?? data.answer;
-
+        const direct = data.reply ?? data.message ?? data.response ?? data.answer;
         if (typeof direct === "string" && direct.trim()) return direct.trim();
-
         const choice = data.choices?.[0]?.message?.content;
         if (typeof choice === "string" && choice.trim()) return choice.trim();
-
         return null;
-      }
-
-      async function postJsonWithTimeout(url, payload, timeoutMs) {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-        try {
-          const res = await fetch(url, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(payload),
-            signal: controller.signal
-          });
-
-          const data = await res.json().catch(() => ({}));
-          return { res, data };
-        } finally {
-          clearTimeout(timer);
-        }
       }
 
       async function sendMessage() {
         if (isSending) return;
-
         const text = els.input.value.trim();
         if (!text) return;
 
@@ -243,11 +232,13 @@
         els.input.value = "";
 
         try {
-          const { res, data } = await postJsonWithTimeout(
-            CONFIG.endpoint,
-            { messages: history, message: text },
-            CONFIG.timeoutMs
-          );
+          const res = await fetch(CONFIG.endpoint, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ messages: history, message: text })
+          });
+
+          const data = await res.json().catch(() => ({}));
 
           if (!res.ok) {
             appendMessage("Fehler: " + (data.error || "Serverproblem."), "bot");
@@ -261,15 +252,12 @@
 
           appendMessage(reply, "bot");
           history.push({ role: "assistant", content: reply });
-        } catch (err) {
-          const isTimeout = err && err.name === "AbortError";
+        } catch {
           appendMessage(
-            isTimeout
-              ? "Zeitüberschreitung. Bitte versuchen Sie es erneut."
-              : "Verbindungsfehler. Bitte versuchen Sie es später erneut.",
+            "Verbindungsfehler. Bitte versuchen Sie es später erneut.",
             "bot"
           );
-          setStatus(isTimeout ? "Timeout." : "Verbindungsfehler.");
+          setStatus("Verbindungsfehler.");
         } finally {
           isSending = false;
           els.sendBtn.disabled = false;
@@ -278,7 +266,6 @@
       }
 
       els.sendBtn.addEventListener("click", sendMessage);
-
       els.input.addEventListener("keydown", (e) => {
         if (e.key === "Enter") {
           e.preventDefault();
@@ -289,5 +276,6 @@
       appendMessage(CONFIG.intro, "bot");
     })();
   </script>
+
 </body>
 </html>
