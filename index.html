@@ -13,7 +13,7 @@
       --text-muted: #6b7280;
       --border: #e5e7eb;
 
-      /* KCS brand (keine Gradients) */
+      /* KCS brand */
       --kcs-blue: #14608c;
 
       /* UI mapping */
@@ -55,7 +55,7 @@
       flex-direction: column;
     }
 
-    /* Header inside the same window */
+    /* Topbar */
     .topbar {
       display: flex;
       align-items: center;
@@ -97,14 +97,25 @@
       text-overflow: ellipsis;
     }
 
-    .accent {
+    .availability {
       margin-left: auto;
-      width: 10px;
-      height: 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-muted);
+      background: #f9fafb;
+      padding: 6px 10px;
       border-radius: 999px;
-      background: var(--primary);
-      box-shadow: 0 0 0 4px rgba(20, 96, 140, 0.12);
-      flex: 0 0 auto;
+      border: 1px solid var(--border);
+    }
+
+    .dot-online {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #22c55e;
     }
 
     #messages {
@@ -123,14 +134,14 @@
       max-width: 78%;
       padding: 11px 12px;
       border-radius: var(--radius-sm);
-      word-wrap: break-word;
       white-space: pre-wrap;
+      word-wrap: break-word;
     }
 
     .user {
       align-self: flex-end;
       background: var(--primary);
-      color: #fff;
+      color: #ffffff;
       border-radius: 14px 14px 6px 14px;
     }
 
@@ -157,6 +168,7 @@
       background: rgba(17, 24, 39, 0.45);
       animation: bounce 1.05s infinite ease-in-out;
     }
+
     .dot:nth-child(2) { animation-delay: 0.15s; }
     .dot:nth-child(3) { animation-delay: 0.3s; }
 
@@ -168,7 +180,7 @@
     .composer {
       border-top: 1px solid var(--border);
       background: var(--surface);
-      padding: 12px 12px 10px;
+      padding: 12px;
       display: flex;
       gap: 10px;
       align-items: center;
@@ -227,9 +239,13 @@
       <img src="kcs_logo_original.png" alt="KCS Logo" class="logo" />
       <div class="title-wrap">
         <div class="title">KCS Assistent</div>
-        <div class="subtitle">KI-Systeme, Automatisierung, Websites</div>
+        <div class="subtitle">KI-Systeme · Automatisierung · Websites</div>
       </div>
-      <div class="accent" aria-hidden="true"></div>
+
+      <div class="availability">
+        <span class="dot-online"></span>
+        <span>24/7 online</span>
+      </div>
     </div>
 
     <div id="messages"></div>
@@ -246,10 +262,7 @@
     (() => {
       "use strict";
 
-      /**
-       * Konfiguration (einfach anpassbar, ohne Logik anzufassen)
-       */
-      const CONFIG = Object.freeze({
+      const CONFIG = {
         endpoint: "/api/chat",
         timeoutMs: 25000,
         intro:
@@ -259,13 +272,9 @@
           "Du berätst zu: KI-Chatbots, KI-Rezeptionisten (Chat/Telefon/WhatsApp je nach Setup), Automatisierung sowie Websites mit integrierter KI. " +
           "Regeln: Antworte kurz und präzise (max. 2–4 Sätze). Keine langen Texte. Keine Aufzählungen mit mehr als 4 Punkten. " +
           "Stelle pro Antwort höchstens 1 gezielte Rückfrage. " +
-          "Keine falschen Versprechen: Behaupte keine Integrationen, wenn sie nicht bestätigt sind. " +
-          "Keine sensiblen Daten anfordern. Ton: professionell, lösungsorientiert."
-      });
+          "Keine falschen Versprechen. Keine sensiblen Daten anfordern. Ton: professionell, lösungsorientiert."
+      };
 
-      /**
-       * DOM
-       */
       const els = {
         messages: document.getElementById("messages"),
         input: document.getElementById("input"),
@@ -278,9 +287,6 @@
         return;
       }
 
-      /**
-       * State
-       */
       const state = {
         busy: false,
         history: [{ role: "system", content: CONFIG.systemPrompt }]
@@ -311,12 +317,10 @@
       function appendTypingBubble() {
         const wrapper = document.createElement("div");
         wrapper.className = "msg bot";
-
         const typing = document.createElement("div");
         typing.className = "typing";
         typing.innerHTML =
           '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
-
         wrapper.appendChild(typing);
         els.messages.appendChild(wrapper);
         scrollToBottom();
@@ -325,22 +329,17 @@
 
       function extractReply(payload) {
         if (!payload || typeof payload !== "object") return null;
-
         const direct =
           payload.reply ?? payload.message ?? payload.response ?? payload.answer;
-
         if (typeof direct === "string" && direct.trim()) return direct.trim();
-
         const choice = payload.choices?.[0]?.message?.content;
         if (typeof choice === "string" && choice.trim()) return choice.trim();
-
         return null;
       }
 
       async function postJson(url, body, timeoutMs) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
-
         try {
           const res = await fetch(url, {
             method: "POST",
@@ -348,7 +347,6 @@
             body: JSON.stringify(body),
             signal: controller.signal
           });
-
           const data = await res.json().catch(() => ({}));
           return { res, data };
         } finally {
@@ -398,14 +396,12 @@
         } catch (err) {
           typingEl.remove();
           const isTimeout = err && err.name === "AbortError";
-
           appendMessage(
             isTimeout
               ? "Zeitüberschreitung. Bitte versuchen Sie es erneut."
               : "Verbindungsfehler. Bitte versuchen Sie es später erneut.",
             "bot"
           );
-
           setStatus(isTimeout ? "Timeout." : "Verbindungsfehler.");
         } finally {
           setBusy(false);
@@ -413,17 +409,14 @@
         }
       }
 
-      function onKeyDown(e) {
-        if (e.key !== "Enter") return;
-        e.preventDefault();
-        handleSend();
-      }
-
-      // Events
       els.sendBtn.addEventListener("click", handleSend);
-      els.input.addEventListener("keydown", onKeyDown);
+      els.input.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleSend();
+        }
+      });
 
-      // Init
       appendMessage(CONFIG.intro, "bot");
       els.input.focus();
     })();
