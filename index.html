@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Demobot – Unternehmensassistent</title>
+  <title>KCS Assistent</title>
 
   <style>
     :root {
@@ -12,7 +12,15 @@
       --text-light: #4f4f4f;
       --white: #ffffff;
       --border: #dcdfe3;
-      --primary: #2f67c2;
+
+      /* KCS Brand Colors */
+      --kcs-blue: #14608c;
+      --kcs-teal: #1392a8;
+      --kcs-orange: #fa742d;
+
+      /* UI Mapping */
+      --primary: var(--kcs-blue);
+      --primary-hover: #0f4e72;
     }
 
     * {
@@ -41,7 +49,8 @@
     .logo {
       height: 36px;
       margin-bottom: 10px;
-      opacity: 0.9;
+      opacity: 0.92;
+      filter: saturate(0.95);
     }
 
     h1 {
@@ -137,7 +146,7 @@
     }
 
     button:hover {
-      background: #2557a3;
+      background: var(--primary-hover);
     }
 
     .status {
@@ -152,13 +161,13 @@
 <body>
 
   <div class="header">
-    <img src="kcs_logo_original.png" alt="Demobot Logo" class="logo" />
-    <h1>Demobot – Ihr digitaler Patientenassistent</h1>
+    <img src="kcs_logo_original.png" alt="KCS Logo" class="logo" />
+    <h1>KCS Assistent</h1>
   </div>
 
   <p class="demo-hinweis">
-    <strong>Demo-Version:</strong> Diese Vorschau zeigt, wie ein digitaler Assistent für Ihr Unternehmen aussehen kann.
-    Inhalte, Design und Funktionen werden individuell angepasst.
+    <strong>Demo-Version:</strong> Diese Vorschau zeigt einen digitalen Assistenten von <strong>KCS</strong>.
+    Inhalte, Design und Funktionen werden individuell an Ihr Unternehmen angepasst.
   </p>
 
   <div class="chat-container">
@@ -180,11 +189,14 @@
         endpoint: "/api/chat",
         timeoutMs: 25000,
         intro:
-          "Willkommen beim Demobot (Demo). Stellen Sie Ihre Frage rund um Termine, Sprechzeiten oder Rezepte.",
+          "Willkommen bei KCS. Ich bin Ihr digitaler Assistent. Wobei kann ich helfen – Chatbots, KI-Rezeption, Automatisierung oder Websites mit integrierter KI?",
         systemPrompt:
-          "Du bist der digitale Praxisassistent (Demobot) einer Arztpraxis. " +
-          "Du beantwortest nur organisatorische Fragen zu Sprechzeiten, Rezepten, Terminen usw. " +
-          "Du gibst keine medizinischen Diagnosen oder Therapieempfehlungen und verweist bei Notfällen auf den Notruf 112."
+          "Du bist der digitale Assistent von KCS (Keuter Communication Systems), einem Digitalisierungsunternehmen mit Fokus auf KI-Systeme. " +
+          "Du berätst professionell zu Chatbots, KI-Rezeptionisten (Chat/Telefon/WhatsApp je nach Setup), Automatisierungen und Websites mit integrierter KI. " +
+          "Du klärst Anforderungen strukturiert (Branche, Ziel, Kanal, Umfang, Sprachen, bestehende Systeme). " +
+          "Du gibst keine falschen Versprechen ab und behauptest keine Integrationen, die nicht bestätigt sind. " +
+          "Bei Terminanfragen bietest du an, einen Terminwunsch aufzunehmen oder Kontaktdaten zu erfassen, ohne eine Buchung zu bestätigen, sofern keine Integration besteht. " +
+          "Antworte sachlich, lösungsorientiert und geschäftlich. Keine sensiblen Daten anfordern."
       };
 
       const els = {
@@ -194,22 +206,32 @@
         status: document.getElementById("status")
       };
 
+      if (!els.messages || !els.input || !els.sendBtn || !els.status) {
+        console.error("KCS Assistent: Fehlende DOM-Elemente.");
+        return;
+      }
+
       const history = [{ role: "system", content: CONFIG.systemPrompt }];
-      let isSending = false;
+      let busy = false;
 
       function setStatus(text) {
         els.status.textContent = text || "";
       }
 
+      function setBusy(state) {
+        busy = state;
+        els.sendBtn.disabled = state;
+      }
+
       function appendMessage(text, role) {
-        const div = document.createElement("div");
-        div.className = "msg " + role;
-        div.textContent = text;
-        els.messages.appendChild(div);
+        const el = document.createElement("div");
+        el.className = "msg " + role;
+        el.textContent = text;
+        els.messages.appendChild(el);
         els.messages.scrollTop = els.messages.scrollHeight;
       }
 
-      function normalizeReply(data) {
+      function extractReply(data) {
         if (!data || typeof data !== "object") return null;
         const direct = data.reply ?? data.message ?? data.response ?? data.answer;
         if (typeof direct === "string" && direct.trim()) return direct.trim();
@@ -218,49 +240,66 @@
         return null;
       }
 
+      async function postJson(url, body, timeoutMs) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+        try {
+          const res = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(body),
+            signal: controller.signal
+          });
+          const data = await res.json().catch(() => ({}));
+          return { res, data };
+        } finally {
+          clearTimeout(timer);
+        }
+      }
+
       async function sendMessage() {
-        if (isSending) return;
+        if (busy) return;
+
         const text = els.input.value.trim();
         if (!text) return;
 
-        isSending = true;
-        els.sendBtn.disabled = true;
-
+        setBusy(true);
         setStatus("");
+
         appendMessage(text, "user");
         history.push({ role: "user", content: text });
         els.input.value = "";
 
         try {
-          const res = await fetch(CONFIG.endpoint, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ messages: history, message: text })
-          });
-
-          const data = await res.json().catch(() => ({}));
+          const { res, data } = await postJson(
+            CONFIG.endpoint,
+            { messages: history, message: text },
+            CONFIG.timeoutMs
+          );
 
           if (!res.ok) {
-            appendMessage("Fehler: " + (data.error || "Serverproblem."), "bot");
+            appendMessage("Fehler: " + (data?.error || "Serverproblem."), "bot");
             setStatus("Fehler bei der Serverantwort.");
             return;
           }
 
           const reply =
-            normalizeReply(data) ||
-            "Es ist ein unerwarteter Fehler aufgetreten.";
+            extractReply(data) || "Es ist ein unerwarteter Fehler aufgetreten.";
 
           appendMessage(reply, "bot");
           history.push({ role: "assistant", content: reply });
-        } catch {
+        } catch (err) {
+          const isTimeout = err && err.name === "AbortError";
           appendMessage(
-            "Verbindungsfehler. Bitte versuchen Sie es später erneut.",
+            isTimeout
+              ? "Zeitüberschreitung. Bitte versuchen Sie es erneut."
+              : "Verbindungsfehler. Bitte versuchen Sie es später erneut.",
             "bot"
           );
-          setStatus("Verbindungsfehler.");
+          setStatus(isTimeout ? "Timeout." : "Verbindungsfehler.");
         } finally {
-          isSending = false;
-          els.sendBtn.disabled = false;
+          setBusy(false);
           els.input.focus();
         }
       }
