@@ -13,10 +13,7 @@
       --text-muted: #6b7280;
       --border: #e5e7eb;
 
-      /* KCS brand */
       --kcs-blue: #14608c;
-
-      /* UI mapping */
       --primary: var(--kcs-blue);
       --primary-hover: #0f4e72;
 
@@ -64,11 +61,7 @@
       background: var(--surface);
     }
 
-    .logo {
-      height: 34px;
-      width: auto;
-      display: block;
-    }
+    .logo { height: 34px; width: auto; display: block; }
 
     .title-wrap {
       display: flex;
@@ -110,12 +103,7 @@
       border: 1px solid var(--border);
     }
 
-    .dot-online {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: #22c55e;
-    }
+    .dot-online { width: 8px; height: 8px; border-radius: 50%; background: #22c55e; }
 
     #messages {
       flex: 1;
@@ -267,18 +255,17 @@
         intro:
           "Willkommen bei KCS. Wobei kann ich helfen – Chatbot, KI-Rezeption, Automatisierung oder Website mit KI?",
 
-        // WICHTIG: Booking-Protokoll + kurze Antworten
         systemPrompt:
           "Du bist der digitale Assistent von KCS (Keuter Communication Systems). " +
           "Du berätst zu: KI-Chatbots, KI-Rezeptionisten, Automatisierung sowie Websites mit integrierter KI. " +
           "Regeln: Antworte kurz und präzise (max. 2–4 Sätze). Stelle pro Antwort höchstens 1 gezielte Rückfrage. " +
-          "Wenn es um Terminvereinbarung geht, führe den Nutzer zügig zu einem Termin. " +
-          "Du darfst einen Termin in den KCS-Kalender eintragen, aber NUR nach eindeutiger Bestätigung (z. B. 'Ja, bitte eintragen'). " +
-          "Bevor du buchst, stelle sicher, dass du Datum, Startzeit (Europe/Berlin) und Dauer hast. E-Mail ist optional. " +
+          "Terminlogik: Wenn ein Nutzer einen Termin möchte, sammle schnell die Mindestdaten: Datum, Startzeit, Dauer (Europe/Berlin). E-Mail optional. " +
+          "WICHTIG: Bei relativen Angaben (z. B. 'morgen', 'übermorgen', 'nächsten Dienstag', 'kommende Woche') MUSST du IMMER das konkrete Datum nennen und vom Nutzer bestätigen lassen, bevor du buchst. " +
+          "Du darfst einen Termin nur buchen, wenn der Nutzer eindeutig bestätigt (z. B. 'Ja, bitte eintragen'). " +
           "Wenn du buchen sollst, gib am ENDE deiner Antwort zusätzlich genau einen Marker im folgenden Format aus: " +
           "<<BOOK:{\"start\":\"ISO_DATETIME\",\"end\":\"ISO_DATETIME\",\"summary\":\"...\",\"description\":\"...\",\"attendeeEmail\":\"optional\"}>> " +
-          "Der Marker muss gültiges JSON enthalten. Ansonsten niemals einen BOOK-Marker ausgeben. " +
-          "Keine sensiblen Daten anfordern."
+          "Der Marker muss gültiges JSON enthalten und start/end müssen ISO-8601 mit Zeitzone sein (z. B. +01:00). " +
+          "Ansonsten niemals einen BOOK-Marker ausgeben."
       };
 
       const els = {
@@ -288,6 +275,31 @@
         status: document.getElementById("status")
       };
 
+      const TZ = "Europe/Berlin";
+
+      function berlinNowString() {
+        // Stabiler "Heute"-Bezugspunkt für das Modell (Europe/Berlin)
+        const now = new Date();
+        const parts = new Intl.DateTimeFormat("de-DE", {
+          timeZone: TZ,
+          weekday: "long",
+          year: "numeric",
+          month: "2-digit",
+          day: "2-digit",
+          hour: "2-digit",
+          minute: "2-digit"
+        }).formatToParts(now);
+
+        const get = (t) => parts.find(p => p.type === t)?.value || "";
+        const dd = get("day");
+        const mm = get("month");
+        const yyyy = get("year");
+        const hh = get("hour");
+        const min = get("minute");
+        const wd = get("weekday");
+        return `Heute ist ${wd}, ${dd}.${mm}.${yyyy}, ${hh}:${min} Uhr (${TZ}).`;
+      }
+
       if (!els.messages || !els.input || !els.sendBtn || !els.status) {
         console.error("KCS Assistent: Fehlende DOM-Elemente.");
         return;
@@ -295,21 +307,15 @@
 
       const state = {
         busy: false,
-        history: [{ role: "system", content: CONFIG.systemPrompt }]
+        history: [
+          { role: "system", content: CONFIG.systemPrompt },
+          { role: "system", content: berlinNowString() }
+        ]
       };
 
-      function setStatus(text) {
-        els.status.textContent = text || "";
-      }
-
-      function setBusy(isBusy) {
-        state.busy = isBusy;
-        els.sendBtn.disabled = isBusy;
-      }
-
-      function scrollToBottom() {
-        els.messages.scrollTop = els.messages.scrollHeight;
-      }
+      function setStatus(text) { els.status.textContent = text || ""; }
+      function setBusy(isBusy) { state.busy = isBusy; els.sendBtn.disabled = isBusy; }
+      function scrollToBottom() { els.messages.scrollTop = els.messages.scrollHeight; }
 
       function appendMessage(text, roleClass) {
         const node = document.createElement("div");
@@ -325,8 +331,7 @@
         wrapper.className = "msg bot";
         const typing = document.createElement("div");
         typing.className = "typing";
-        typing.innerHTML =
-          '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+        typing.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
         wrapper.appendChild(typing);
         els.messages.appendChild(wrapper);
         scrollToBottom();
@@ -343,18 +348,12 @@
       }
 
       function parseBookingMarker(text) {
-        // Sucht: <<BOOK:{...}>>
         const re = /<<BOOK:(\{[\s\S]*?\})>>/;
         const m = text.match(re);
         if (!m) return { cleanText: text, booking: null };
 
-        const jsonStr = m[1];
         let booking = null;
-        try {
-          booking = JSON.parse(jsonStr);
-        } catch {
-          booking = null;
-        }
+        try { booking = JSON.parse(m[1]); } catch { booking = null; }
 
         const cleanText = text.replace(re, "").trim();
         return { cleanText, booking };
@@ -363,7 +362,6 @@
       async function postJson(url, body, timeoutMs) {
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeoutMs);
-
         try {
           const res = await fetch(url, {
             method: "POST",
@@ -371,7 +369,6 @@
             body: JSON.stringify(body),
             signal: controller.signal
           });
-
           const data = await res.json().catch(() => ({}));
           return { res, data };
         } finally {
@@ -379,14 +376,29 @@
         }
       }
 
+      function isValidIsoDateTime(s) {
+        if (typeof s !== "string") return false;
+        const d = new Date(s);
+        return Number.isFinite(d.getTime());
+      }
+
       async function bookCalendar(booking) {
-        // Minimal-Validation (Frontend)
         const start = booking?.start;
         const end = booking?.end;
         const summary = booking?.summary;
 
         if (!start || !end || !summary) {
           return { ok: false, error: "Ungültige Buchungsdaten (start/end/summary fehlen)." };
+        }
+        if (!isValidIsoDateTime(start) || !isValidIsoDateTime(end)) {
+          return { ok: false, error: "Ungültiges Datum/Zeitformat. Bitte konkretes Datum & Uhrzeit bestätigen lassen." };
+        }
+
+        const startD = new Date(start);
+        const endD = new Date(end);
+
+        if (endD <= startD) {
+          return { ok: false, error: "Ungültige Zeitspanne (Ende liegt vor Beginn)." };
         }
 
         const payload = {
@@ -441,27 +453,21 @@
 
           typingEl.remove();
 
-          // Erst die normale Bot-Antwort ausgeben (ohne Marker)
           appendMessage(cleanText || "Alles klar.", "bot");
           state.history.push({ role: "assistant", content: rawReply });
 
-          // Falls Booking Marker vorhanden → automatisch buchen
           if (booking) {
             const typing2 = appendTypingBubble();
-
             const result = await bookCalendar(booking);
-
             typing2.remove();
 
             if (result.ok) {
-              const link = result.data?.link || result.data?.htmlLink;
-              const confirm =
-                "Termin ist eingetragen." + (link ? " Link: " + link : "");
-              appendMessage(confirm, "bot");
-              state.history.push({ role: "assistant", content: confirm });
+              // Kein Link ausgeben – nur kurze Bestätigung
+              appendMessage("Termin ist eingetragen.", "bot");
+              state.history.push({ role: "assistant", content: "Termin ist eingetragen." });
             } else {
               appendMessage(
-                "Ich konnte den Termin nicht eintragen. Bitte nennen Sie eine Alternative oder prüfen Sie Datum/Uhrzeit.",
+                "Ich konnte den Termin nicht eintragen. Bitte bestätigen Sie das genaue Datum und die Uhrzeit (z. B. 16.12.2025, 10:00).",
                 "bot"
               );
               setStatus(result.error + (result.detail ? " (Details in Console)" : ""));
