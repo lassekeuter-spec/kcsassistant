@@ -260,18 +260,11 @@
           timeZone: "Europe/Berlin",
           durationMinutes: 45,
 
-          // Arbeitsfenster
-          businessDaysOnly: true,  // Mo–Fr
+          businessDaysOnly: true, // Mo–Fr
           businessStart: "09:00",
-          businessEnd: "18:00",    // letzter Start ist < 18:00 (du kannst das anpassen)
-
-          // Slot-Grid: 45-Minuten-Blöcke ab businessStart (09:00 -> 09:45 -> 10:30 ...)
+          businessEnd: "18:00",
           slotMinutes: 45
-        },
-
-        systemPrompt:
-          "Du bist der digitale Assistent von KCS (Keuter Communication Systems). " +
-          "Antworte kurz, freundlich und professionell (max. 2–4 Sätze)."
+        }
       };
 
       const els = {
@@ -281,14 +274,48 @@
         status: document.getElementById("status")
       };
 
+      // ---------- Systemprompt (ausführlich + Dienstleistungen) ----------
+      const SYSTEM_PROMPT = `
+Du bist der digitale Assistent von KCS (Keuter Communication Systems), einem Digitalisierungsunternehmen mit Fokus auf KI-Systeme.
+
+AUFGABENBEREICH:
+1) Du beantwortest Fragen zu unseren Dienstleistungen kurz und verständlich:
+   - KI-Chatbots (z. B. Website-Chatbot, Support-Bot, Sales-Bot)
+   - KI-Rezeption / Terminassistenz (Chat, optional WhatsApp/Telefon-Konzept)
+   - Automatisierung (z. B. Prozesse, Lead-Handling, Content-Workflows, Integrationen)
+   - Websites (Erstellung, Optimierung, inklusive integrierter KI-Funktionen)
+   Bei Unklarheit stellst du höchstens 1 Rückfrage.
+
+2) Du unterstützt beim Terminvereinbaren und beim Eintragen eines Termins in Google Calendar.
+
+TONALITÄT / STIL:
+- Freundlich, professionell, lösungsorientiert.
+- Antworten kurz und präzise (max. 2–4 Sätze).
+- Keine langen Aufzählungen; wenn nötig 1–2 Bulletpoints.
+- Keine Widersprüche: Bleibe logisch konsistent über den gesamten Chatverlauf.
+
+TERMINREGELN (WICHTIG):
+- Zeitzone: Europe/Berlin.
+- Termine dauern 45 Minuten.
+- Termine werden NUR gebucht, wenn der Nutzer eindeutig zustimmt (z. B. "ja", "passt", "bitte eintragen").
+- Wenn der Nutzer "nein" sagt: KEIN Termin wird gebucht.
+- Wenn eine gewünschte Uhrzeit nicht möglich ist, bietest du genau EINE konkrete Alternative an.
+  Beispiel: "Leider können wir um 17:00 nicht. Würde Ihnen 17:15 passen?"
+- Wenn der Nutzer eine neue Uhrzeit/ein neues Datum nennt, behandelst du es als neuen Wunsch (nicht als Ja/Nein).
+
+SICHERHEIT / TRANSPARENZ:
+- Erfinde keine Kalenderbuchungen. Bestätige "eingetragen" nur, wenn wirklich gebucht wurde.
+`;
+
+      // ---------- State ----------
       const state = {
         busy: false,
-        history: [{ role: "system", content: CONFIG.systemPrompt }],
-        mode: "IDLE", // IDLE | COLLECT | CONFIRM
-        pending: null // { proposedParts }
+        history: [{ role: "system", content: SYSTEM_PROMPT }],
+        mode: "IDLE",   // IDLE | COLLECT | CONFIRM
+        pending: null   // { proposedParts }
       };
 
-      // ---------- UI ----------
+      // ---------- UI helpers ----------
       function setStatus(text) { els.status.textContent = text || ""; }
       function setBusy(v) { state.busy = v; els.sendBtn.disabled = v; }
       function scrollToBottom() { els.messages.scrollTop = els.messages.scrollHeight; }
@@ -314,9 +341,12 @@
         return wrapper;
       }
 
-      async function withThinking(fn) {
+      // Nach JEDER Bot-Nachricht: kurze Thinkbubble (immer)
+      async function botReply(text, delayMs = 420) {
         const bubble = appendTypingBubble();
-        try { return await fn(); } finally { bubble.remove(); }
+        await new Promise(r => setTimeout(r, delayMs));
+        bubble.remove();
+        appendMessage(text, "bot");
       }
 
       async function postJson(url, body, timeoutMs) {
@@ -419,10 +449,8 @@
       }
 
       function weekdayIndex(dateParts) {
-        // 0 So ... 6 Sa (in Berlin, aber via UTC-Noon stabil)
         const d = toUTCNoonDate(dateParts);
-        // d.getUTCDay() entspricht der Day-Index; durch UTC-Noon driftet nicht.
-        return d.getUTCDay();
+        return d.getUTCDay(); // 0 So ... 6 Sa
       }
 
       function isBusinessDay(p) {
@@ -451,14 +479,13 @@
         return m >= minutesOfDay(s) && m < minutesOfDay(e);
       }
 
-      // Slot-Raster ab businessStart (z.B. 09:00 -> 09:45 -> 10:30 ...)
+      // Slot-Raster ab businessStart (09:00 -> 09:45 -> 10:30 -> 11:15 ...)
       function snapToSlotGrid(p) {
         const { s } = businessWindow();
         const base = minutesOfDay(s);
         const t = minutesOfDay(p);
         const step = CONFIG.booking.slotMinutes;
 
-        // wenn vor businessStart: direkt auf businessStart
         if (t <= base) return { ...p, hour: s.hour, minute: s.minute };
 
         const delta = t - base;
@@ -480,21 +507,17 @@
         return { ...next, hour: Math.floor(rest / 60), minute: rest % 60 };
       }
 
-      // Nächster gültiger Slot: am selben Tag weiter, erst dann nächster Tag businessStart
       function nextValidSlot(fromParts) {
         let p = { ...fromParts };
 
-        // Falls Wochenende -> nächster Werktag businessStart
         while (!isBusinessDay(p)) {
           const nextDay = addDaysBerlin(p, 1);
           const { s } = businessWindow();
           p = { ...nextDay, hour: s.hour, minute: s.minute };
         }
 
-        // Auf Slotgrid runden
         p = snapToSlotGrid(p);
 
-        // Wenn außerhalb BusinessHours -> nächster Werktag businessStart
         if (!isWithinBusinessHours(p)) {
           let nextDay = addDaysBerlin(p, 1);
           while (!isBusinessDay(nextDay)) nextDay = addDaysBerlin(nextDay, 1);
@@ -506,7 +529,6 @@
         return p;
       }
 
-      // Folgeslot (45 min später), am selben Tag soweit möglich
       function nextSlotAfter(p) {
         const step = CONFIG.booking.slotMinutes;
         const candidate = addMinutes(p, step);
@@ -541,13 +563,13 @@
       }
 
       // ---------- Booking flow messages ----------
-      function askForDatetime() {
+      async function askForDatetime() {
         state.mode = "COLLECT";
         state.pending = null;
-        appendMessage("Sehr gern. Nennen Sie mir bitte Datum und Uhrzeit (z. B. „morgen 16:00“ oder „18.12 09:00“).", "bot");
+        await botReply("Sehr gern. Nennen Sie mir bitte Datum und Uhrzeit (z. B. „morgen 16:00“ oder „18.12 09:00“).");
       }
 
-      function proposeAlternative(requested, proposed) {
+      async function proposeAlternative(requested, proposed) {
         const req = formatTime(requested);
         const propTime = formatTime(proposed);
 
@@ -558,16 +580,15 @@
 
         const when = sameDate ? propTime : `${formatDate(proposed)} um ${propTime}`;
 
-        appendMessage(`Leider können wir um ${req} nicht. Würde Ihnen auch ${when} passen?`, "bot");
+        await botReply(`Leider können wir um ${req} nicht. Würde Ihnen auch ${when} passen?`);
 
         state.mode = "CONFIRM";
         state.pending = { proposedParts: proposed };
       }
 
-      function confirmExact(proposed) {
-        appendMessage(
-          `Soll ich den Termin am ${formatDate(proposed)} um ${formatTime(proposed)} für 45 Minuten eintragen? (Ja/Nein)`,
-          "bot"
+      async function confirmExact(proposed) {
+        await botReply(
+          `Soll ich den Termin am ${formatDate(proposed)} um ${formatTime(proposed)} für 45 Minuten eintragen? (Ja/Nein)`
         );
         state.mode = "CONFIRM";
         state.pending = { proposedParts: proposed };
@@ -591,29 +612,27 @@
         return { ok: false, status: res.status, error: err, detail: data };
       }
 
-      // ---------- LLM (nur IDLE, niemals im Terminflow) ----------
+      // ---------- LLM (IDLE) ----------
       async function sendToChat(userText) {
-        const typing = appendTypingBubble();
         try {
           const { res, data } = await postJson(
             CONFIG.chatEndpoint,
             { messages: state.history, message: userText },
             CONFIG.timeoutMs
           );
-          typing.remove();
 
           if (!res.ok) {
-            appendMessage("Entschuldigung, da ist gerade etwas schiefgelaufen. Bitte versuchen Sie es nochmal.", "bot");
+            await botReply("Entschuldigung, da ist gerade etwas schiefgelaufen. Bitte versuchen Sie es nochmal.");
             setStatus("Fehler bei der Serverantwort.");
             return;
           }
 
           const reply = extractReply(data) || "Ich konnte dazu gerade nichts Passendes finden.";
-          appendMessage(reply, "bot");
+          await botReply(reply);
           state.history.push({ role: "assistant", content: reply });
+
         } catch (e) {
-          typing.remove();
-          appendMessage("Ich habe gerade Verbindungsprobleme. Bitte versuchen Sie es gleich nochmal.", "bot");
+          await botReply("Ich habe gerade Verbindungsprobleme. Bitte versuchen Sie es gleich nochmal.");
           setStatus("Verbindungsfehler.");
         }
       }
@@ -641,39 +660,36 @@
           })();
 
           if (state.mode === "CONFIRM" && userProvidedNewDatetime) {
-            state.mode = "COLLECT"; // re-route
+            state.mode = "COLLECT";
           }
 
           // CONFIRM
           if (state.mode === "CONFIRM") {
             if (!state.pending?.proposedParts) {
               state.mode = "COLLECT";
-              appendMessage("Entschuldigung – ich habe die vorgeschlagene Zeit nicht mehr korrekt. Nennen Sie mir bitte Datum und Uhrzeit erneut.", "bot");
+              await botReply("Entschuldigung – ich habe die vorgeschlagene Zeit nicht mehr korrekt. Nennen Sie mir bitte Datum und Uhrzeit erneut.");
               return;
             }
 
+            // Guard: Ohne "Ja" wird niemals gebucht
             if (looksLikeYes(text)) {
               const proposed = state.pending.proposedParts;
-
-              const result = await withThinking(async () => bookExact(proposed));
+              const result = await bookExact(proposed);
 
               if (result.ok) {
-                appendMessage("Perfekt – der Termin ist eingetragen.", "bot");
+                await botReply("Perfekt – der Termin ist eingetragen.");
                 state.mode = "IDLE";
                 state.pending = null;
                 return;
               }
 
-              // Konflikt -> nächster Slot anbieten
               if (result.status === 409) {
-                await withThinking(async () => {
-                  const next = nextSlotAfter(proposed);
-                  proposeAlternative(proposed, next);
-                });
+                const next = nextSlotAfter(proposed);
+                await proposeAlternative(proposed, next);
                 return;
               }
 
-              appendMessage("Das hat leider nicht geklappt. Möchten Sie eine andere Zeit vorschlagen?", "bot");
+              await botReply("Das hat leider nicht geklappt. Möchten Sie eine andere Zeit vorschlagen?");
               console.error("Calendar booking error:", result.detail || result);
               state.mode = "COLLECT";
               state.pending = null;
@@ -681,39 +697,32 @@
             }
 
             if (looksLikeNo(text)) {
-              await withThinking(async () => {
-                const next = nextSlotAfter(state.pending.proposedParts);
-                // Wording bleibt konsistent: „um X nicht … würde Y passen?“
-                proposeAlternative(state.pending.proposedParts, next);
-              });
+              const next = nextSlotAfter(state.pending.proposedParts);
+              await proposeAlternative(state.pending.proposedParts, next);
               return;
             }
 
-            appendMessage("Kurz zur Sicherheit: Passt der vorgeschlagene Termin? Bitte „Ja“ oder „Nein“.", "bot");
+            await botReply("Kurz zur Sicherheit: Passt der vorgeschlagene Termin? Bitte „Ja“ oder „Nein“.");
             return;
           }
 
           // COLLECT
           if (state.mode === "COLLECT") {
-            const parsed = await withThinking(async () => buildRequestedStart(text));
+            const parsed = buildRequestedStart(text);
 
             if (!parsed.ok) {
               if (parsed.reason === "NEED_TIME") {
-                appendMessage("Gern. Um wie viel Uhr soll der Termin starten? (z. B. 17:00)", "bot");
+                await botReply("Gern. Um wie viel Uhr soll der Termin starten? (z. B. 17:00)");
               } else {
-                appendMessage("Für welches Datum? (z. B. „morgen“ oder „18.12“) – plus Uhrzeit.", "bot");
+                await botReply("Für welches Datum? (z. B. „morgen“ oder „18.12“) – plus Uhrzeit.");
               }
               return;
             }
 
             const requested = parsed.requested;
-
-            // 1) auf Slotgrid runden
             const snapped = snapToSlotGrid(requested);
-            // 2) dann ins Business-Fenster bringen (falls z.B. Wochenende / außerhalb Uhrzeit)
             const proposed = nextValidSlot(snapped);
 
-            // Wenn requested nicht exakt gleich proposed -> Alternative im gewünschten Stil
             const same =
               requested.year === proposed.year &&
               requested.month === proposed.month &&
@@ -722,22 +731,21 @@
               requested.minute === proposed.minute;
 
             if (!same) {
-              proposeAlternative(requested, proposed);
+              await proposeAlternative(requested, proposed);
               return;
             }
 
-            // requested passt exakt -> confirm
-            confirmExact(proposed);
+            await confirmExact(proposed);
             return;
           }
 
           // IDLE
           if (looksLikeAppointmentIntent(text)) {
-            askForDatetime();
+            await askForDatetime();
             return;
           }
 
-          // normal chat
+          // normal chat (Dienstleistungen etc.)
           await sendToChat(text);
 
         } finally {
@@ -754,8 +762,11 @@
         }
       });
 
-      appendMessage(CONFIG.welcome, "bot");
-      els.input.focus();
+      // Start: Welcome (mit Thinkbubble, weil "nach jeder Bot-Nachricht")
+      (async () => {
+        await botReply(CONFIG.welcome);
+        els.input.focus();
+      })();
     })();
   </script>
 </body>
